@@ -41,6 +41,7 @@ class RsBackendConsoleInjectionHelper : BackendConsoleInjectionHelper {
 
             override fun stackFrameChanged() {
                 val file = document?.virtualFile ?: return
+                bllog("RsBackendConsoleInjectionHelper.stackFrameChanged(file=", file, "docManager=", PsiDocumentManager.getInstance(session.project))
                 invokeLater(ModalityState.NON_MODAL) {
                     PsiDocumentManager.getInstance(session.project).reparseFiles(setOf(file), true)
                 }

@@ -43,27 +43,58 @@ class RsDebugProcessConfigurationHelper(
 
     private val sysroot: String? by lazy {
         cargoProject.workingDirectory
-            .let { toolchain?.rustc()?.getSysroot(it) }
-            ?.let { toolchain?.toRemotePath(it) }
+            .let {
+                val srt = toolchain?.rustc()?.getSysroot(it)
+                bllog("Cargo project has a working directory. Getting sysroot from rustc. Sysroot is: ", srt)
+                srt
+            }
+            ?.let {
+                val srt = toolchain?.toRemotePath(it)
+                bllog("Cargo project has no working directory. Sysroot is: ", srt)
+                srt
+            }
     }
 
     fun configure() {
+        bllog("RsDebugProcessConfigurationHelper.configure()")
+        bllog("Values in RsDebugProcessConfigurationHelper are")
+        bllog("settings ", settings)
+        bllog("project ", project)
+        bllog("toolchain ", toolchain)
+        bllog("threadId ", threadId)
+        bllog("frameIndex ", frameIndex)
+        bllog("commitHash ", commitHash)
+        bllog("prettyPrintersPath ", prettyPrintersPath)
+
         process.postCommand { driver ->
             try {
+                bllog("driver.loadRustcSources()")
                 driver.loadRustcSources()
+                bllog("driver.loadPrettyPrinters()")
                 driver.loadPrettyPrinters()
                 if (settings.breakOnPanic) {
+                    bllog("driver.breakOnPanic()")
                     driver.setBreakOnPanic()
                 }
+                bllog("driver.setSteppingFilters()")
                 driver.setSteppingFilters()
+                bllog("driver.done setting filters")
             } catch (e: DebuggerCommandException) {
+                bllog("Got DebuggerCommandException, ", e)
                 process.printlnToConsole(e.message)
                 LOG.warn(e)
             } catch (e: InvalidPathException) {
+                bllog("Got InvalidPathException, ", e)
                 LOG.warn(e)
             }
         }
     }
+
+    private fun DebuggerDriver.executeInterpreterCommandAndLog(threadId: Long, frameIndex: Int, command: String) {
+        bllog("calling executeInterpreterCommand(threadId=", threadId, ", frameIndex=", frameIndex, "fullCommand=", command)
+        executeInterpreterCommand(threadId, frameIndex, command)
+    }
+
 
     private fun DebuggerDriver.setBreakOnPanic() {
         val commands = when (this) {
@@ -72,7 +103,7 @@ class RsDebugProcessConfigurationHelper(
             else -> return
         }
         for (command in commands) {
-            executeInterpreterCommand(threadId, frameIndex, command)
+            executeInterpreterCommandAndLog(threadId, frameIndex, command)
         }
     }
 
@@ -81,6 +112,7 @@ class RsDebugProcessConfigurationHelper(
         if (settings.skipStdlibInStepping) {
             regexes.add("^(std|core|alloc)::.*")
         }
+        bllog("Setting stepping filters. Regexes: ", regexes)
 
         val command = when (this) {
             is LLDBDriver -> "settings set target.process.thread.step-avoid-regexp"
@@ -88,24 +120,32 @@ class RsDebugProcessConfigurationHelper(
             else -> return
         }
         for (regex in regexes) {
-            executeInterpreterCommand(threadId, frameIndex, "$command $regex")
+            executeInterpreterCommandAndLog(threadId, frameIndex, "$command $regex")
         }
     }
 
     private fun DebuggerDriver.loadRustcSources() {
+        bllog("loadRustcSources()")
         if (commitHash == null) return
 
+        bllog("commitHash ", commitHash)
         val sysroot = checkSysroot(sysroot, RsBundle.message("notification.content.cannot.load.rustc.sources"))
             ?: return
+        bllog("sysroot ", sysroot)
         val sourceMapCommand = when (this) {
             is LLDBDriver -> "settings set target.source-map"
             is GDBDriver -> "set substitute-path"
             else -> return
         }
+        bllog("sourceMapCommand ", sourceMapCommand)
         val rustcHash = "/rustc/$commitHash/".systemDependentAndEscaped()
+        bllog("rustcHash ", rustcHash)
         val rustcSources = "$sysroot/lib/rustlib/src/rust/".systemDependentAndEscaped()
+        bllog("rustcSources ", rustcSources)
         val fullCommand = """$sourceMapCommand "$rustcHash" "$rustcSources" """
-        executeInterpreterCommand(threadId, frameIndex, fullCommand)
+        bllog("fullCommand ", fullCommand)
+        bllog("calling executeInterpreterCommandAndLog(threadId=", threadId, ", frameIndex=", frameIndex, "fullCommand=", fullCommand)
+        executeInterpreterCommandAndLog(threadId, frameIndex, fullCommand)
     }
 
     private fun DebuggerDriver.loadPrettyPrinters() {
@@ -130,13 +170,15 @@ class RsDebugProcessConfigurationHelper(
 
                 val lldbLookupPath = "$basePath/$LLDB_LOOKUP.py".systemDependentAndEscaped()
                 val lldbCommandsPath = "$basePath/lldb_commands".systemDependentAndEscaped()
-                executeInterpreterCommand(threadId, frameIndex, """command script import "$lldbLookupPath" """)
-                executeInterpreterCommand(threadId, frameIndex, """command source "$lldbCommandsPath" """)
+                executeInterpreterCommandAndLog(threadId, frameIndex, """command script import "$lldbLookupPath" """)
+                executeInterpreterCommandAndLog(threadId, frameIndex, """command source "$lldbCommandsPath" """)
             }
 
             LLDBRenderers.BUNDLED -> {
                 val path = prettyPrintersPath?.systemDependentAndEscaped() ?: return
-                executeInterpreterCommand(threadId, frameIndex, """command script import "$path/lldb_formatters" """)
+                val command = """command script import "$path/lldb_formatters" """
+                bllog("calling executeInterpreterCommandAndLog(threadId=", threadId, ", frameIndex=", frameIndex, "fullCommand=", command)
+                executeInterpreterCommandAndLog(threadId, frameIndex, command)
             }
 
             LLDBRenderers.NONE -> {
@@ -162,7 +204,7 @@ class RsDebugProcessConfigurationHelper(
             """sys.path.insert(0, "$path"); """ +
             """import $GDB_LOOKUP; """ +
             """$GDB_LOOKUP.register_printers(gdb); """
-        executeInterpreterCommand(threadId, frameIndex, command)
+        executeInterpreterCommandAndLog(threadId, frameIndex, command)
     }
 
     private fun checkSysroot(sysroot: String?, @Suppress("UnstableApiUsage") @NotificationContent message: String): String? {
